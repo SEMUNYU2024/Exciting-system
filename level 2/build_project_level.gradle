@@ -1,0 +1,14 @@
+// build.gradle (Project level)
+buildscript {
+    // Defines repositories to fetch dependencies from.
+    repositories {
+        google() // Google's Maven repository for Android dependencies.
+        mavenCentral() // Maven Central repository for various libraries.
+    }
+    dependencies {
+        // Adds Android Gradle plugin as a dependency, specifying version 7.0.4.
+        classpath 'com.android.tools.build:gradle:7.0.4'
+        // Adds Kotlin Gradle plugin to enable Kotlin support, specifying version 1.6.10.
+        classpath 'org.jetbrains.kotlin:kotlin-gradle-plugin:1.6.10'
+    }
+}

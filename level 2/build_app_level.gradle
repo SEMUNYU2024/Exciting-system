@@ -1,0 +1,40 @@
+// build.gradle (App level)
+plugins {
+    // Applies the Android application plugin for building an Android app.
+    id 'com.android.application'
+    // Applies the Kotlin Android plugin for Kotlin support in the project.
+    id 'kotlin-android'
+}
+
+android {
+    compileSdk 33 // Sets the API level of the SDK the app is compiled with.
+
+    defaultConfig {
+        applicationId "com.example.chatbot" // Unique package name for the app.
+        minSdk 23 // Minimum API level required to run the app.
+        targetSdk 33 // API level the app is targeting.
+        versionCode 1 // Internal version number.
+        versionName "1.0" // User-facing version name.
+    }
+
+    buildFeatures {
+        viewBinding true // Enables view binding for simpler view access.
+    }
+}
+
+dependencies {
+    // Core Android extensions for Kotlin.
+    implementation 'androidx.core:core-ktx:1.7.0'
+    // AndroidX compatibility library for backward-compatible components.
+    implementation 'androidx.appcompat:appcompat:1.4.1'
+    // Material Design components for UI elements.
+    implementation 'com.google.android.material:material:1.5.0'
+    // ConstraintLayout for flexible and responsive layouts.
+    implementation 'androidx.constraintlayout:constraintlayout:2.1.3'
+    // Coroutine support for asynchronous programming on Android.
+    implementation 'org.jetbrains.kotlinx:kotlinx-coroutines-android:1.5.2'
+    // ViewModel support for managing UI-related data in a lifecycle-conscious way.
+    implementation 'androidx.lifecycle:lifecycle-viewmodel-ktx:2.4.0'
+    // Lifecycle runtime extensions for managing UI lifecycle with coroutines.
+    implementation 'androidx.lifecycle:lifecycle-runtime-ktx:2.4.0'
+}
