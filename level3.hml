@@ -1,0 +1,352 @@
+// pom.xml
+<?xml version="1.0" encoding="UTF-8"?>
+<project xmlns="http://maven.apache.org/POM/4.0.0"
+         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 https://maven.apache.org/xsd/maven-4.0.0.xsd">
+    <modelVersion>4.0.0</modelVersion>
+    
+    <groupId>com.example</groupId>
+    <artifactId>secure-messaging</artifactId>
+    <version>1.0.0</version>
+    
+    <parent>
+        <groupId>org.springframework.boot</groupId>
+        <artifactId>spring-boot-starter-parent</artifactId>
+        <version>2.7.0</version>
+    </parent>
+    
+    <dependencies>
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-websocket</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-security</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-data-jpa</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>com.h2database</groupId>
+            <artifactId>h2</artifactId>
+            <scope>runtime</scope>
+        </dependency>
+        <dependency>
+            <groupId>org.bouncycastle</groupId>
+            <artifactId>bcprov-jdk15on</artifactId>
+            <version>1.70</version>
+        </dependency>
+        <dependency>
+            <groupId>io.jsonwebtoken</groupId>
+            <artifactId>jjwt</artifactId>
+            <version>0.9.1</version>
+        </dependency>
+        <dependency>
+            <groupId>org.projectlombok</groupId>
+            <artifactId>lombok</artifactId>
+            <optional>true</optional>
+        </dependency>
+    </dependencies>
+</project>
+
+// src/main/java/com/example/messaging/security/EncryptionService.java
+package com.example.messaging.security;
+
+import org.bouncycastle.jce.provider.BouncyCastleProvider;
+import org.springframework.stereotype.Service;
+
+import javax.crypto.Cipher;
+import javax.crypto.KeyGenerator;
+import javax.crypto.SecretKey;
+import javax.crypto.spec.IvParameterSpec;
+import java.security.*;
+import java.util.Base64;
+
+@Service
+public class EncryptionService {
+    private static final String ALGORITHM = "AES/CBC/PKCS7Padding";
+    private static final int KEY_SIZE = 256;
+    
+    static {
+        Security.addProvider(new BouncyCastleProvider());
+    }
+    
+    public KeyPair generateKeyPair() throws NoSuchAlgorithmException {
+        KeyPairGenerator generator = KeyPairGenerator.getInstance("RSA");
+        generator.initialize(2048);
+        return generator.generateKeyPair();
+    }
+    
+    public SecretKey generateAESKey() throws NoSuchAlgorithmException {
+        KeyGenerator keyGen = KeyGenerator.getInstance("AES");
+        keyGen.init(KEY_SIZE);
+        return keyGen.generateKey();
+    }
+    
+    public String encrypt(String plaintext, SecretKey key) throws GeneralSecurityException {
+        Cipher cipher = Cipher.getInstance(ALGORITHM);
+        byte[] iv = generateIV();
+        cipher.init(Cipher.ENCRYPT_MODE, key, new IvParameterSpec(iv));
+        
+        byte[] encryptedBytes = cipher.doFinal(plaintext.getBytes());
+        byte[] combined = new byte[iv.length + encryptedBytes.length];
+        
+        System.arraycopy(iv, 0, combined, 0, iv.length);
+        System.arraycopy(encryptedBytes, 0, combined, iv.length, encryptedBytes.length);
+        
+        return Base64.getEncoder().encodeToString(combined);
+    }
+    
+    public String decrypt(String ciphertext, SecretKey key) throws GeneralSecurityException {
+        byte[] combined = Base64.getDecoder().decode(ciphertext);
+        byte[] iv = new byte[16];
+        byte[] encrypted = new byte[combined.length - 16];
+        
+        System.arraycopy(combined, 0, iv, 0, 16);
+        System.arraycopy(combined, 16, encrypted, 0, encrypted.length);
+        
+        Cipher cipher = Cipher.getInstance(ALGORITHM);
+        cipher.init(Cipher.DECRYPT_MODE, key, new IvParameterSpec(iv));
+        
+        byte[] decryptedBytes = cipher.doFinal(encrypted);
+        return new String(decryptedBytes);
+    }
+    
+    private byte[] generateIV() {
+        byte[] iv = new byte[16];
+        new SecureRandom().nextBytes(iv);
+        return iv;
+    }
+}
+
+// src/main/java/com/example/messaging/model/Message.java
+package com.example.messaging.model;
+
+import lombok.Data;
+import javax.persistence.*;
+import java.time.LocalDateTime;
+
+@Data
+@Entity
+public class Message {
+    @Id
+    @GeneratedValue(strategy = GenerationType.IDENTITY)
+    private Long id;
+    
+    @Column(nullable = false)
+    private String senderId;
+    
+    @Column(nullable = false)
+    private String receiverId;
+    
+    @Column(nullable = false)
+    private String encryptedContent;
+    
+    @Column(nullable = false)
+    private LocalDateTime timestamp;
+    
+    @Column(nullable = false)
+    private boolean delivered;
+    
+    @Column(nullable = false)
+    private boolean read;
+}
+
+// src/main/java/com/example/messaging/model/User.java
+package com.example.messaging.model;
+
+import lombok.Data;
+import javax.persistence.*;
+
+@Data
+@Entity
+public class User {
+    @Id
+    @GeneratedValue(strategy = GenerationType.IDENTITY)
+    private Long id;
+    
+    @Column(unique = true, nullable = false)
+    private String username;
+    
+    @Column(nullable = false)
+    private String publicKey;
+    
+    @Column(nullable = false)
+    private boolean online;
+}
+
+// src/main/java/com/example/messaging/service/MessageService.java
+package com.example.messaging.service;
+
+import com.example.messaging.model.Message;
+import com.example.messaging.repository.MessageRepository;
+import com.example.messaging.security.EncryptionService;
+import lombok.RequiredArgsConstructor;
+import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
+
+import java.time.LocalDateTime;
+import java.util.List;
+
+@Service
+@RequiredArgsConstructor
+public class MessageService {
+    private final MessageRepository messageRepository;
+    private final EncryptionService encryptionService;
+    
+    @Transactional
+    public Message saveMessage(String senderId, String receiverId, String content, 
+                             javax.crypto.SecretKey sessionKey) {
+        try {
+            String encryptedContent = encryptionService.encrypt(content, sessionKey);
+            
+            Message message = new Message();
+            message.setSenderId(senderId);
+            message.setReceiverId(receiverId);
+            message.setEncryptedContent(encryptedContent);
+            message.setTimestamp(LocalDateTime.now());
+            message.setDelivered(false);
+            message.setRead(false);
+            
+            return messageRepository.save(message);
+        } catch (Exception e) {
+            throw new RuntimeException("Failed to save message", e);
+        }
+    }
+    
+    @Transactional(readOnly = true)
+    public List<Message> getUnreadMessages(String userId) {
+        return messageRepository.findByReceiverIdAndReadFalse(userId);
+    }
+    
+    @Transactional
+    public void markAsDelivered(Long messageId) {
+        messageRepository.findById(messageId).ifPresent(message -> {
+            message.setDelivered(true);
+            messageRepository.save(message);
+        });
+    }
+    
+    @Transactional
+    public void markAsRead(Long messageId) {
+        messageRepository.findById(messageId).ifPresent(message -> {
+            message.setRead(true);
+            messageRepository.save(message);
+        });
+    }
+}
+
+// src/main/java/com/example/messaging/websocket/WebSocketConfig.java
+package com.example.messaging.websocket;
+
+import org.springframework.context.annotation.Configuration;
+import org.springframework.messaging.simp.config.MessageBrokerRegistry;
+import org.springframework.web.socket.config.annotation.*;
+
+@Configuration
+@EnableWebSocketMessageBroker
+public class WebSocketConfig implements WebSocketMessageBrokerConfigurer {
+    
+    @Override
+    public void configureMessageBroker(MessageBrokerRegistry config) {
+        config.enableSimpleBroker("/topic", "/queue");
+        config.setApplicationDestinationPrefixes("/app");
+    }
+    
+    @Override
+    public void registerStompEndpoints(StompEndpointRegistry registry) {
+        registry.addEndpoint("/ws")
+               .setAllowedOrigins("*")
+               .withSockJS();
+    }
+}
+
+// src/main/java/com/example/messaging/websocket/WebSocketHandler.java
+package com.example.messaging.websocket;
+
+import com.example.messaging.model.Message;
+import com.example.messaging.service.MessageService;
+import lombok.RequiredArgsConstructor;
+import org.springframework.messaging.handler.annotation.*;
+import org.springframework.messaging.simp.SimpMessagingTemplate;
+import org.springframework.stereotype.Controller;
+
+import javax.crypto.SecretKey;
+import java.security.Principal;
+
+@Controller
+@RequiredArgsConstructor
+public class WebSocketHandler {
+    private final MessageService messageService;
+    private final SimpMessagingTemplate messagingTemplate;
+    
+    @MessageMapping("/chat.send")
+    @SendTo("/topic/messages")
+    public Message sendMessage(@Payload String content,
+                             @Header("senderId") String senderId,
+                             @Header("receiverId") String receiverId,
+                             @Header("sessionKey") SecretKey sessionKey) {
+        Message message = messageService.saveMessage(senderId, receiverId, content, sessionKey);
+        
+        // Send to specific user's queue
+        messagingTemplate.convertAndSendToUser(
+            receiverId,
+            "/queue/messages",
+            message
+        );
+        
+        return message;
+    }
+    
+    @MessageMapping("/chat.delivered")
+    public void messageDelivered(@Payload Long messageId) {
+        messageService.markAsDelivered(messageId);
+    }
+    
+    @MessageMapping("/chat.read")
+    public void messageRead(@Payload Long messageId) {
+        messageService.markAsRead(messageId);
+    }
+}
+
+// src/main/java/com/example/messaging/controller/UserController.java
+package com.example.messaging.controller;
+
+import com.example.messaging.model.User;
+import com.example.messaging.service.UserService;
+import lombok.RequiredArgsConstructor;
+import org.springframework.http.ResponseEntity;
+import org.springframework.web.bind.annotation.*;
+
+@RestController
+@RequestMapping("/api/users")
+@RequiredArgsConstructor
+public class UserController {
+    private final UserService userService;
+    
+    @PostMapping("/register")
+    public ResponseEntity<User> registerUser(@RequestBody User user) {
+        return ResponseEntity.ok(userService.registerUser(user));
+    }
+    
+    @GetMapping("/{username}/public-key")
+    public ResponseEntity<String> getPublicKey(@PathVariable String username) {
+        return ResponseEntity.ok(userService.getPublicKey(username));
+    }
+}
+
+// src/main/resources/application.properties
+spring.datasource.url=jdbc:h2:mem:chatdb
+spring.datasource.driverClassName=org.h2.Driver
+spring.jpa.database-platform=org.hibernate.dialect.H2Dialect
+spring.h2.console.enabled=true
+
+server.ssl.key-store=classpath:keystore.p12
+server.ssl.key-store-password=your-password
+server.ssl.keyStoreType=PKCS12
+server.ssl.keyAlias=tomcat
+
+logging.level.org.springframework.security=DEBUG
+logging.level.org.springframework.web.socket=DEBUG
